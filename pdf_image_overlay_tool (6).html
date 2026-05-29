@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF & Image Overlay Studio</title>
+    <!-- Tailwind CSS for Styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- PDF.js for rendering PDFs on Canvas -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <!-- jsPDF for creating the final PDF file -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        /* Custom scrollbar for better UI */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        .checkerboard {
+            background-color: #f0f0f0;
+            background-image: 
+                linear-gradient(45deg, #ccc 25%, transparent 25%, transparent 75%, #ccc 75%, #ccc),
+                linear-gradient(45deg, #ccc 25%, transparent 25%, transparent 75%, #ccc 75%, #ccc);
+            background-size: 20px 20px;
+            background-position: 0 0, 10px 10px;
+        }
+
+        /* Print Styles - Flattened Image Strategy */
+        @media print {
+            /* Hide the main app UI entirely */
+            body > *:not(#printContainer) {
+                display: none !important;
+            }
+            
+            /* Show ONLY the generated flat image */
+            #printContainer {
+                display: flex !important;
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100vw;
+                height: 100vh;
+                align-items: center;
+                justify-content: center;
+                background: white;
+                z-index: 9999;
+            }
+            
+            #printOutput {
+                max-width: 100%;
+                max-height: 100%;
+                object-fit: contain;
+            }
+            
+            @page { margin: 0; size: auto; }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen text-gray-800 font-sans flex flex-col">
+
+    <header class="bg-white border-b border-gray-200 px-6 py-4 shadow-sm flex items-center justify-between">
+        <div class="flex items-center gap-3">
+            <div class="p-2 bg-blue-100 text-blue-600 rounded-lg">
+                <i data-lucide="layers"></i>
+            </div>
+            <div>
+                <h1 class="text-xl font-bold text-gray-900">Overlay Studio</h1>
+                <p class="text-xs text-gray-500">Combine Images and PDFs in the browser</p>
+            </div>
+        </div>
+    </header>
+
+    <main class="flex-1 flex flex-col lg:flex-row p-6 gap-6 max-w-7xl mx-auto w-full">
+        
+        <!-- Controls Sidebar -->
+        <aside class="w-full lg:w-80 flex flex-col gap-6">
+            
+            <!-- Step 1: PDF Upload -->
+            <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                <h2 class="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
+                    <span class="bg-gray-800 text-white w-5 h-5 flex items-center justify-center rounded-full text-xs">1</span>
+                    Background PDF
+                </h2>
+                <div class="relative border-2 border-dashed border-gray-300 rounded-lg p-4 hover:bg-gray-50 transition-colors text-center cursor-pointer" onclick="document.getElementById('pdfUpload').click()">
+                    <i data-lucide="file-text" class="mx-auto text-gray-400 mb-2"></i>
+                    <p class="text-sm text-gray-600">Click to upload PDF</p>
+                    <input type="file" id="pdfUpload" accept="application/pdf" class="hidden" />
+                </div>
+                
+                <!-- PDF Controls (Hidden initially) -->
+                <div id="pdfControls" class="mt-4 hidden flex flex-col gap-3">
+                    <div class="flex items-center justify-between bg-gray-100 p-2 rounded-lg">
+                        <button id="prevPage" class="p-1 hover:bg-gray-200 rounded disabled:opacity-50"><i data-lucide="chevron-left" class="w-4 h-4"></i></button>
+                        <span id="pageInfo" class="text-xs font-medium">Page 1 / 1</span>
+                        <button id="nextPage" class="p-1 hover:bg-gray-200 rounded disabled:opacity-50"><i data-lucide="chevron-right" class="w-4 h-4"></i></button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 2: Image Upload -->
+            <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                <h2 class="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
+                    <span class="bg-gray-800 text-white w-5 h-5 flex items-center justify-center rounded-full text-xs">2</span>
+                    Image Overlay (Layer 2)
+                </h2>
+                <div class="relative border-2 border-dashed border-gray-300 rounded-lg p-4 hover:bg-gray-50 transition-colors text-center cursor-pointer" onclick="document.getElementById('imageUpload').click()">
+                    <i data-lucide="image" class="mx-auto text-gray-400 mb-2"></i>
+                    <p class="text-sm text-gray-600">Default loaded. Click to replace</p>
+                    <input type="file" id="imageUpload" accept="image/*" class="hidden" />
+                </div>
+            </div>
+
+            <!-- Step 3: Appearance Adjustments -->
+            <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                <h2 class="text-sm font-bold text-gray-700 mb-4 flex items-center gap-2">
+                    <span class="bg-gray-800 text-white w-5 h-5 flex items-center justify-center rounded-full text-xs">3</span>
+                    Appearance
+                </h2>
+                
+                <div class="mb-4">
+                    <label class="text-xs font-medium text-gray-600 block mb-1 flex justify-between">
+                        Image Opacity <span id="opacityValue">100%</span>
+                    </label>
+                    <input type="range" id="opacitySlider" min="0" max="100" value="100" class="w-full accent-blue-600">
+                </div>
+
+                <div>
+                    <label class="text-xs font-medium text-gray-600 block mb-1">Blend Mode (Like Photoshop)</label>
+                    <select id="blendMode" class="w-full text-sm border border-gray-300 rounded-lg p-2 bg-gray-50 outline-none focus:border-blue-500">
+                        <option value="normal">Normal</option>
+                        <option value="multiply">Multiply</option>
+                        <option value="screen">Screen</option>
+                        <option value="overlay">Overlay</option>
+                        <option value="darken">Darken</option>
+                        <option value="lighten">Lighten</option>
+                        <option value="color-burn">Color Burn</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Step 4: Actions -->
+            <div class="mt-auto pt-4 pb-2 flex flex-col gap-3">
+                <button id="downloadPdfBtn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-xl shadow-md transition-colors flex items-center justify-center gap-2">
+                    <i data-lucide="download" class="w-5 h-5"></i>
+                    Download as PDF
+                </button>
+                <button id="printBtn" class="w-full bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-3 px-4 rounded-xl transition-colors flex items-center justify-center gap-2">
+                    <i data-lucide="printer" class="w-5 h-5"></i>
+                    Print via Browser
+                </button>
+            </div>
+
+        </aside>
+
+        <!-- Canvas/Workspace Area -->
+        <section class="flex-1 bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col overflow-hidden">
+            <div class="p-3 border-b border-gray-200 bg-gray-50 flex justify-between items-center">
+                <span class="text-xs font-medium text-gray-500 uppercase tracking-wider">Preview Canvas</span>
+            </div>
+            
+            <div class="flex-1 checkerboard relative overflow-hidden flex items-center justify-center p-4 min-h-[500px]">
+                
+                <!-- Placeholder Text -->
+                <div id="placeholderText" class="text-center text-gray-400 absolute z-0 pointer-events-none">
+                    <i data-lucide="monitor" class="w-12 h-12 mx-auto mb-3 opacity-50"></i>
+                    <p>Upload an image and a PDF to see the overlay.</p>
+                </div>
+
+                <!-- Container that holds both layers perfectly aligned -->
+                <div id="workspaceContainer" class="relative max-w-full max-h-full shadow-lg ring-1 ring-black/5">
+                    <!-- Layer 1: PDF Background -->
+                    <canvas id="pdfCanvas" class="block max-w-full max-h-full object-contain hidden"></canvas>
+                    
+                    <!-- Layer 2: Image Overlay (Default Source Added) -->
+                    <img id="overlayImage" src="MAINA_PANINI_223.png" crossorigin="anonymous" class="absolute top-0 left-0 w-full h-full object-contain pointer-events-none hidden" alt="Overlay Layer" />
+                </div>
+
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Print Container (Hidden until requested) -->
+    <div id="printContainer" style="display: none;">
+        <img id="printOutput" />
+    </div>
+
+    <!-- Error Toast -->
+    <div id="errorToast" class="fixed bottom-5 right-5 bg-red-600 text-white px-4 py-3 rounded-lg shadow-lg transform translate-y-20 opacity-0 transition-all duration-300 flex items-center gap-2">
+        <i data-lucide="alert-circle" class="w-5 h-5"></i>
+        <span id="errorMessage" class="text-sm">Error loading file.</span>
+    </div>
+
+    <script>
+        // Initialize Icons
+        lucide.createIcons();
+
+        // Configure PDF.js worker
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+        // DOM Elements
+        const imageUpload = document.getElementById('imageUpload');
+        const pdfUpload = document.getElementById('pdfUpload');
+        const overlayImage = document.getElementById('overlayImage');
+        const pdfCanvas = document.getElementById('pdfCanvas');
+        const placeholderText = document.getElementById('placeholderText');
+        
+        const opacitySlider = document.getElementById('opacitySlider');
+        const opacityValue = document.getElementById('opacityValue');
+        const blendModeSelect = document.getElementById('blendMode');
+        
+        const pdfControls = document.getElementById('pdfControls');
+        const prevPageBtn = document.getElementById('prevPage');
+        const nextPageBtn = document.getElementById('nextPage');
+        const pageInfo = document.getElementById('pageInfo');
+        const printBtn = document.getElementById('printBtn');
+        const downloadPdfBtn = document.getElementById('downloadPdfBtn');
+        
+        const printOutput = document.getElementById('printOutput');
+
+        // State
+        let pdfDoc = null;
+        let pageNum = 1;
+        let pageRendering = false;
+        let pageNumPending = null;
+        let currentScale = 4.0; // Increased from 2.0 to 4.0 for ultra-high printing resolution
+
+        // --- Core Image Merging Logic ---
+        function generateMergedImage() {
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = pdfCanvas.width;
+            tempCanvas.height = pdfCanvas.height;
+            const ctx = tempCanvas.getContext('2d');
+
+            // 1. Draw the PDF background
+            ctx.drawImage(pdfCanvas, 0, 0);
+
+            // 2. Setup appearance controls for canvas
+            const opacity = opacitySlider.value / 100;
+            const cssBlendMode = blendModeSelect.value;
+            // Map CSS blend modes to Canvas globalCompositeOperation
+            const blendModeMap = {
+                'normal': 'source-over',
+                'multiply': 'multiply',
+                'screen': 'screen',
+                'overlay': 'overlay',
+                'darken': 'darken',
+                'lighten': 'lighten',
+                'color-burn': 'color-burn'
+            };
+            
+            ctx.globalAlpha = opacity;
+            ctx.globalCompositeOperation = blendModeMap[cssBlendMode] || 'source-over';
+
+            // 3. Draw the Image Over it. Mimic 'object-fit: contain'
+            const canvasRatio = tempCanvas.width / tempCanvas.height;
+            const imgRatio = overlayImage.naturalWidth / overlayImage.naturalHeight;
+            let drawWidth = tempCanvas.width;
+            let drawHeight = tempCanvas.height;
+            let offsetX = 0;
+            let offsetY = 0;
+
+            if (imgRatio > canvasRatio) {
+                drawHeight = tempCanvas.width / imgRatio;
+                offsetY = (tempCanvas.height - drawHeight) / 2;
+            } else {
+                drawWidth = tempCanvas.height * imgRatio;
+                offsetX = (tempCanvas.width - drawWidth) / 2;
+            }
+
+            ctx.drawImage(overlayImage, offsetX, offsetY, drawWidth, drawHeight);
+
+            // 4. Return both the canvas properties and the data image URL
+            // Using PNG instead of JPEG prevents compression artifacts on fine text
+            return {
+                tempCanvas: tempCanvas,
+                imgData: tempCanvas.toDataURL('image/png')
+            };
+        }
+
+
+        // --- Event Listeners ---
+
+        // 0. Default Image Load Handler
+        overlayImage.onload = () => {
+            overlayImage.classList.remove('hidden');
+            if (pdfCanvas.classList.contains('hidden')) {
+                document.querySelector('#placeholderText p').textContent = "Default image ready. Upload a PDF to see the overlay.";
+            } else {
+                placeholderText.classList.add('hidden');
+            }
+        };
+
+        // Trigger load event if the image is already cached by the browser
+        if (overlayImage.complete && overlayImage.naturalWidth > 0) {
+            setTimeout(() => overlayImage.onload(), 50);
+        }
+
+        // 1. Image Upload (Override Default)
+        imageUpload.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                if (!file.type.startsWith('image/')) {
+                    showError("Please upload a valid image file (PNG/JPG).");
+                    return;
+                }
+                const url = URL.createObjectURL(file);
+                // onload logic is handled by the global handler above
+                overlayImage.src = url;
+            }
+        });
+
+        // 2. PDF Upload
+        pdfUpload.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                if (file.type !== 'application/pdf') {
+                    showError("Please upload a valid PDF document.");
+                    return;
+                }
+                
+                const fileReader = new FileReader();
+                fileReader.onload = function() {
+                    const typedarray = new Uint8Array(this.result);
+                    
+                    pdfjsLib.getDocument(typedarray).promise.then(pdf => {
+                        pdfDoc = pdf;
+                        pdfControls.classList.remove('hidden');
+                        pdfCanvas.classList.remove('hidden');
+                        placeholderText.classList.add('hidden');
+                        
+                        pageNum = 1;
+                        renderPage(pageNum);
+                    }).catch(error => {
+                        showError("Error processing PDF: " + error.message);
+                    });
+                };
+                fileReader.readAsArrayBuffer(file);
+            }
+        });
+
+        // 3. Appearance Controls
+        opacitySlider.addEventListener('input', (e) => {
+            const val = e.target.value;
+            opacityValue.textContent = `${val}%`;
+            overlayImage.style.opacity = val / 100;
+        });
+
+        blendModeSelect.addEventListener('change', (e) => {
+            overlayImage.style.mixBlendMode = e.target.value;
+        });
+
+        // 4. Pagination Controls
+        prevPageBtn.addEventListener('click', () => {
+            if (pageNum <= 1) return;
+            pageNum--;
+            queueRenderPage(pageNum);
+        });
+
+        nextPageBtn.addEventListener('click', () => {
+            if (pageNum >= pdfDoc.numPages) return;
+            pageNum++;
+            queueRenderPage(pageNum);
+        });
+
+        // 5. Print Button (Using Flat Image Strategy)
+        printBtn.addEventListener('click', () => {
+            if (overlayImage.classList.contains('hidden') || pdfCanvas.classList.contains('hidden')) {
+                showError("Please upload both a PDF and an Image before printing.");
+                return;
+            }
+
+            const originalText = printBtn.innerHTML;
+            printBtn.innerHTML = '<i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i> Preparing Print...';
+            lucide.createIcons();
+
+            setTimeout(() => {
+                try {
+                    // Generate flattened image
+                    const { imgData } = generateMergedImage();
+                    
+                    // Assign to our hidden print image element
+                    printOutput.src = imgData;
+                    
+                    // Once loaded, launch print dialog
+                    printOutput.onload = () => {
+                        window.print();
+                        printBtn.innerHTML = originalText;
+                        lucide.createIcons();
+                    };
+                } catch (err) {
+                    console.error(err);
+                    showError("Failed to prepare print.");
+                    printBtn.innerHTML = originalText;
+                    lucide.createIcons();
+                }
+            }, 100);
+        });
+
+        // 6. Download as PDF Button
+        downloadPdfBtn.addEventListener('click', () => {
+            if (overlayImage.classList.contains('hidden') || pdfCanvas.classList.contains('hidden')) {
+                showError("Please upload both a PDF and an Image to generate a final PDF.");
+                return;
+            }
+
+            const originalText = downloadPdfBtn.innerHTML;
+            downloadPdfBtn.innerHTML = '<i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i> Generating...';
+            lucide.createIcons();
+            
+            setTimeout(() => {
+                try {
+                    const { tempCanvas, imgData } = generateMergedImage();
+
+                    const { jsPDF } = window.jspdf;
+                    const orientation = tempCanvas.width > tempCanvas.height ? 'l' : 'p';
+                    
+                    // Calculate original PDF physical dimensions so the document isn't massive
+                    const originalWidth = tempCanvas.width / currentScale;
+                    const originalHeight = tempCanvas.height / currentScale;
+                    
+                    const pdf = new jsPDF({
+                        orientation: orientation,
+                        unit: 'pt',
+                        format: [originalWidth, originalHeight]
+                    });
+                    
+                    // Add the high-resolution image, scaled to fit standard physical dimensions
+                    pdf.addImage(imgData, 'PNG', 0, 0, originalWidth, originalHeight);
+                    pdf.save('Final_Overlay_Combined.pdf');
+
+                } catch (err) {
+                    console.error(err);
+                    showError("Failed to generate PDF. Make sure your browser allows this.");
+                } finally {
+                    downloadPdfBtn.innerHTML = originalText;
+                    lucide.createIcons();
+                }
+            }, 100);
+        });
+
+        // --- PDF Rendering Functions ---
+        function renderPage(num) {
+            pageRendering = true;
+            pdfDoc.getPage(num).then(page => {
+                const viewport = page.getViewport({ scale: currentScale });
+                
+                pdfCanvas.height = viewport.height;
+                pdfCanvas.width = viewport.width;
+
+                const renderContext = {
+                    canvasContext: pdfCanvas.getContext('2d'),
+                    viewport: viewport
+                };
+                
+                const renderTask = page.render(renderContext);
+
+                renderTask.promise.then(() => {
+                    pageRendering = false;
+                    if (pageNumPending !== null) {
+                        renderPage(pageNumPending);
+                        pageNumPending = null;
+                    }
+                });
+            });
+
+            pageInfo.textContent = `Page ${num} / ${pdfDoc.numPages}`;
+            prevPageBtn.disabled = num <= 1;
+            nextPageBtn.disabled = num >= pdfDoc.numPages;
+        }
+
+        function queueRenderPage(num) {
+            if (pageRendering) {
+                pageNumPending = num;
+            } else {
+                renderPage(num);
+            }
+        }
+
+        // --- Error UI ---
+        function showError(msg) {
+            const toast = document.getElementById('errorToast');
+            document.getElementById('errorMessage').textContent = msg;
+            toast.classList.remove('translate-y-20', 'opacity-0');
+            setTimeout(() => {
+                toast.classList.add('translate-y-20', 'opacity-0');
+            }, 4000);
+        }
+
+    </script>
+</body>
+</html>
